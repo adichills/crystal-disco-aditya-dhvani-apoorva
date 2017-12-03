@@ -42,6 +42,16 @@ object RandomForestImpl {
     pw.close
   }
 
+  def getNumericalArray(strArr:Array[String],arrDouble:List[Double]): Array[Double] ={
+      var listD:ListBuffer[Double] = new ListBuffer[Double]
+      for(i<- 0 to strArr.length-1){
+        if(arrDouble.contains(i)){
+          listD.append(strArr(i).toDouble)
+        }
+      }
+    listD.toArray
+  }
+
   def main(args: Array[String]) {
 
     var startOverall = System.nanoTime()
@@ -49,6 +59,9 @@ object RandomForestImpl {
 
     val inputDir = args(0)
     val outputDir = args(1)
+    val featureInputFile = args(2)
+
+
 
     val bm = new ListBuffer[Array[String]]()
     val bmHeader = Array("impl", "step", "timeInMs")
@@ -59,16 +72,19 @@ object RandomForestImpl {
     Logger.getLogger("akka").setLevel(Level.OFF)
 
     val conf = new SparkConf().setAppName("RandomForestRegressionExample")
-    conf.setMaster("local")
+    //conf.setMaster("yarn")
     val sc = new SparkContext(conf)
 
-    if (conf.get("master", "") == "") {
-      log.info("Setting master internally")
-      conf.setMaster("local[*]")
-    }
+    val featureInputString = getCSVLines(sc,featureInputFile,",")
+    var featuresWanted = featureInputString.map(row => {row.map(x=>x.toDouble)}).take(1)(0).toList
+
+    //if (conf.get("master", "") == "") {
+      //log.info("Setting master internally")
+      //conf.setMaster("local[*]")
+    //}
 
     start = System.nanoTime()
-    val data = getCSVLines(sc, inputDir + "/all_features4.csv", ",")
+    val data = getCSVLines(sc, inputDir, ",")
 
     val dataPoints = data.map(row =>
       new LabeledPoint(
@@ -76,9 +92,10 @@ object RandomForestImpl {
         // 0 - artist_hotttnesss, 1 - artist_familiarity, 2 - loudness, 3 - tempo, 4 - duration, 5 - song_hotttnesss,
         // 6 - year, 7 - play_count, 8 - song_count, 9 - weight_dot_freq, 10 - similar_artist_count, 11 - likes,
         // 12 - td_meanPrice, 13 - td_confidence, 14 - top_genere, 15 - td_downloads
-        Vectors.dense((row(0)toDouble), (row(1)toDouble), (row(2)toDouble), (row(3)toDouble), (row(4)toDouble),
-          (row(5)toDouble), (row(6)toDouble), (row(7)toDouble), (row(8)toDouble), (row(9)toDouble), (row(10)toDouble),
-          (row(11)toDouble), (row(12)toDouble), row(13).toDouble, (row(14)toDouble))
+//        Vectors.dense((row(0)toDouble), (row(1)toDouble), (row(2)toDouble), (row(3)toDouble), (row(4)toDouble),
+//          (row(5)toDouble), (row(6)toDouble), (row(7)toDouble), (row(8)toDouble), (row(9)toDouble), (row(10)toDouble),
+//          (row(11)toDouble), (row(12)toDouble), row(13).toDouble, (row(14)toDouble))
+         Vectors.dense(getNumericalArray(row,featuresWanted))
 //        Vectors.dense(row.take(row.length - 1).map(str => str.toDouble))
       )
     ).cache()
@@ -158,6 +175,6 @@ object RandomForestImpl {
     write(bm.map(_.toList), bmHeader.toList, new Path(outputDir, "bm.csv"), sc)
     write(writeMetrics.map(_.toList), new Path(outputDir, "metrics.csv"), sc)
 
-    sc.stop()
+    
   }
 }
