@@ -60,8 +60,7 @@ object RandomForestImpl {
     val inputDir = args(0)
     val outputDir = args(1)
     val featureInputFile = args(2)
-
-
+    val testDataFile = args(3)
 
     val bm = new ListBuffer[Array[String]]()
     val bmHeader = Array("impl", "step", "timeInMs")
@@ -73,65 +72,72 @@ object RandomForestImpl {
 
     val conf = new SparkConf().setAppName("RandomForestRegressionExample")
     //conf.setMaster("yarn")
+//    if (conf.get("master", "") == "") {
+//      log.info("Setting master internally")
+//      conf.setMaster("local[*]")
+//    }
     val sc = new SparkContext(conf)
 
     val featureInputString = getCSVLines(sc,featureInputFile,",")
     var featuresWanted = featureInputString.map(row => {row.map(x=>x.toDouble)}).take(1)(0).toList
-
-    //if (conf.get("master", "") == "") {
-      //log.info("Setting master internally")
-      //conf.setMaster("local[*]")
-    //}
 
     start = System.nanoTime()
     val data = getCSVLines(sc, inputDir, ",")
 
     val dataPoints = data.map(row =>
       new LabeledPoint(
-        row.last.toDouble,
-        // 0 - artist_hotttnesss, 1 - artist_familiarity, 2 - loudness, 3 - tempo, 4 - duration, 5 - song_hotttnesss,
-        // 6 - year, 7 - play_count, 8 - song_count, 9 - weight_dot_freq, 10 - similar_artist_count, 11 - likes,
-        // 12 - td_meanPrice, 13 - td_confidence, 14 - top_genere, 15 - td_downloads
-//        Vectors.dense((row(0)toDouble), (row(1)toDouble), (row(2)toDouble), (row(3)toDouble), (row(4)toDouble),
-//          (row(5)toDouble), (row(6)toDouble), (row(7)toDouble), (row(8)toDouble), (row(9)toDouble), (row(10)toDouble),
-//          (row(11)toDouble), (row(12)toDouble), row(13).toDouble, (row(14)toDouble))
-         Vectors.dense(getNumericalArray(row,featuresWanted))
-//        Vectors.dense(row.take(row.length - 1).map(str => str.toDouble))
+        row(16).toDouble,
+        Vectors.dense(getNumericalArray(row,featuresWanted))
       )
-    ).cache()
-    bm.append(Array(sc.master, "read data", toMs(start, System.nanoTime()).toString()))
-    dataPoints.take(5).foreach(x => println(x))
+    )
 
-    start = System.nanoTime()
+    val testData = getCSVLines(sc, testDataFile, ",")
+    val testingData = testData.map(row =>
+      new LabeledPoint(
+        row(16).toDouble,
+        Vectors.dense(getNumericalArray(row,featuresWanted))
+      )
+    )
+
+
+    bm.append(Array(sc.master, "read data", toMs(start, System.nanoTime()).toString()))
+
+//    dataPoints.take(5).foreach(x => println(x))
+
+//    start = System.nanoTime()
      //Split the data into training and test sets (30% held out for testing)
-    val splits = dataPoints.randomSplit(Array(0.7, 0.3), seed = 12345)
-    val (trainingData, testData) = (splits(0), splits(1))
-    bm.append(Array(sc.master, "split data", toMs(start, System.nanoTime()).toString()))
+//    val splits = dataPoints.randomSplit(Array(0.7, 0.3))
+//    val (trainingData, testData) = (splits(0), splits(1))
+//    bm.append(Array(sc.master, "split data", toMs(start, System.nanoTime()).toString()))
 
     start = System.nanoTime()
     // Train a RandomForest model.
     // Empty categoricalFeaturesInfo indicates all features are continuous.
     //val numClasses = 2
-    val categoricalFeaturesInfo = Map[Int, Int]()
+    val categoricalFeaturesInfo = Map[Int, Int](
+      (0, 6)
+    )
+    println(categoricalFeaturesInfo)
+
     val numTrees = 20 // Use more in practice.
     val featureSubsetStrategy = "auto" // Let the algorithm choose.
     val impurity = "variance"
     val maxDepth = 20
     val maxBins = 100
-    val seed = 1234
+//    val seed = 1234
 
-    val model = RandomForest.trainRegressor(trainingData, categoricalFeaturesInfo,
-      numTrees, featureSubsetStrategy, impurity, maxDepth, maxBins, seed)
+    val model = RandomForest.trainRegressor(dataPoints, categoricalFeaturesInfo,
+      numTrees, featureSubsetStrategy, impurity, maxDepth, maxBins)
     bm.append(Array(sc.master, "training data", toMs(start, System.nanoTime()).toString()))
 
     start = System.nanoTime()
     // Evaluate model on test instances and compute test error
-    val labelsAndPredictions = testData.map { point =>
+    val labelsAndPredictions = testingData.map { point =>
       val prediction = model.predict(point.features)
       (point.label, prediction)
     }
     bm.append(Array(sc.master, "testing data", toMs(start, System.nanoTime()).toString()))
-    labelsAndPredictions.take(5).foreach(x => println(x))
+//    labelsAndPredictions.take(5).foreach(x => println(x))
 
     start = System.nanoTime()
     val testMSE = labelsAndPredictions.map { case (v, p) => math.pow((v - p), 2) }.mean()
@@ -139,7 +145,7 @@ object RandomForestImpl {
     writeMetrics.append(Array("Test Mean Squared Error", testMSE.toString()))
 //    println("Learned regression forest model:\n" + model.toDebugString)
 
-    val predictionAndLabels = labelsAndPredictions.map{case (s, c) => (c, s)}.cache()
+    val predictionAndLabels = labelsAndPredictions.map{case (s, c) => (c, s)}
 
     // Instantiate metrics object
     val metrics = new RegressionMetrics(predictionAndLabels)
@@ -165,16 +171,15 @@ object RandomForestImpl {
 
     start = System.nanoTime()
     // Save and load model
-    model.save(sc, "target/tmp/myRandomForestRegressionModel")
-    bm.append(Array(sc.master, "saving model", toMs(start, System.nanoTime()).toString()))
+//    model.save(sc, "target/tmp/myRandomForestRegressionModel")
+//    bm.append(Array(sc.master, "saving model", toMs(start, System.nanoTime()).toString()))
 
     bm.append(Array(sc.master, "total time", toMs(startOverall, System.nanoTime()).toString()))
 //    val sameModel = RandomForestModel.load(sc, "target/tmp/myRandomForestRegressionModel")
 //    sameModel.predict()
-    var empty = ""
+
     write(bm.map(_.toList), bmHeader.toList, new Path(outputDir, "bm.csv"), sc)
     write(writeMetrics.map(_.toList), new Path(outputDir, "metrics.csv"), sc)
 
-    
   }
 }
