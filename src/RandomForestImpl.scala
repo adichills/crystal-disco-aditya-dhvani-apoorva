@@ -76,13 +76,18 @@ object RandomForestImpl {
 //      log.info("Setting master internally")
 //      conf.setMaster("local[*]")
 //    }
+
     val sc = new SparkContext(conf)
 
     val featureInputString = getCSVLines(sc,featureInputFile,",")
     var featuresWanted = featureInputString.map(row => {row.map(x=>x.toDouble)}).take(1)(0).toList
 
+    var featureSet = featuresWanted.toSet
+
+
     start = System.nanoTime()
     val data = getCSVLines(sc, inputDir, ",")
+//    data.take(5).foreach(x => println(x))
 
     val dataPoints = data.map(row =>
       new LabeledPoint(
@@ -103,6 +108,7 @@ object RandomForestImpl {
     bm.append(Array(sc.master, "read data", toMs(start, System.nanoTime()).toString()))
 
 //    dataPoints.take(5).foreach(x => println(x))
+//    testingData.take(5).foreach(x => println(x))
 
 //    start = System.nanoTime()
      //Split the data into training and test sets (30% held out for testing)
@@ -114,10 +120,15 @@ object RandomForestImpl {
     // Train a RandomForest model.
     // Empty categoricalFeaturesInfo indicates all features are continuous.
     //val numClasses = 2
-    val categoricalFeaturesInfo = Map[Int, Int](
-      (0, 6)
-    )
-    println(categoricalFeaturesInfo)
+
+    var categoricalFeaturesInfo = Map[Int, Int]()
+    if (featureSet.contains(0.0)) {
+      categoricalFeaturesInfo = Map[Int, Int](
+        (0, 6)
+      )
+    }
+
+//    println(categoricalFeaturesInfo)
 
     val numTrees = 20 // Use more in practice.
     val featureSubsetStrategy = "auto" // Let the algorithm choose.
@@ -169,14 +180,51 @@ object RandomForestImpl {
     writeMetrics.append(Array("Explained variance", metrics.explainedVariance.toString()))
     bm.append(Array(sc.master, "getting evaluation metrics", toMs(start, System.nanoTime()).toString()))
 
-    start = System.nanoTime()
-    // Save and load model
-//    model.save(sc, "target/tmp/myRandomForestRegressionModel")
-//    bm.append(Array(sc.master, "saving model", toMs(start, System.nanoTime()).toString()))
 
+    ///////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+    start = System.nanoTime()
+    // Evaluate model on the training data itself to check if its underfitting or overfitting
+    val labelsAndPredictionsTrainData = dataPoints.map { point =>
+      val prediction = model.predict(point.features)
+      (point.label, prediction)
+    }
+    bm.append(Array(sc.master, "running model on training data", toMs(start, System.nanoTime()).toString()))
+    //    labelsAndPredictions.take(5).foreach(x => println(x))
+
+    start = System.nanoTime()
+    val testMSETD = labelsAndPredictions.map { case (v, p) => math.pow((v - p), 2) }.mean()
+    println("Test Mean Squared Error Training Data = " + testMSETD)
+    writeMetrics.append(Array("Test Mean Squared Error Training Data", testMSETD.toString()))
+    //    println("Learned regression forest model:\n" + model.toDebugString)
+
+    val predictionAndLabelsTrainData = labelsAndPredictionsTrainData.map{case (s, c) => (c, s)}
+
+    // Instantiate metrics object
+    val metricsTD = new RegressionMetrics(predictionAndLabelsTrainData)
+
+    // Squared error
+    println(s"MSE = ${metricsTD.meanSquaredError}")
+    writeMetrics.append(Array("MSE Training Data", metricsTD.meanSquaredError.toString()))
+    println(s"RMSE Training Data = ${metricsTD.rootMeanSquaredError}")
+    writeMetrics.append(Array("RMSE Training Data", metricsTD.rootMeanSquaredError.toString()))
+
+    // R-squared
+    println(s"R-squared Training Data = ${metricsTD.r2}")
+    writeMetrics.append(Array("R-squared Training Data", metricsTD.r2.toString()))
+
+    // Mean absolute error
+    println(s"MAE Training Data = ${metricsTD.meanAbsoluteError}")
+    writeMetrics.append(Array("MAE Training Data", metricsTD.meanAbsoluteError.toString()))
+
+    // Explained variance
+    println(s"Explained variance Training Data = ${metricsTD.explainedVariance}")
+    writeMetrics.append(Array("Explained variance Training Data", metricsTD.explainedVariance.toString()))
+    bm.append(Array(sc.master, "getting evaluation metrics for training data", toMs(start, System.nanoTime()).toString()))
+
+
+    start = System.nanoTime()
     bm.append(Array(sc.master, "total time", toMs(startOverall, System.nanoTime()).toString()))
-//    val sameModel = RandomForestModel.load(sc, "target/tmp/myRandomForestRegressionModel")
-//    sameModel.predict()
 
     write(bm.map(_.toList), bmHeader.toList, new Path(outputDir, "bm.csv"), sc)
     write(writeMetrics.map(_.toList), new Path(outputDir, "metrics.csv"), sc)
