@@ -130,10 +130,10 @@ object RandomForestImpl {
 
 //    println(categoricalFeaturesInfo)
 
-    val numTrees = 20 // Use more in practice.
+    val numTrees = args(4).toInt // Use more in practice.
     val featureSubsetStrategy = "auto" // Let the algorithm choose.
     val impurity = "variance"
-    val maxDepth = 20
+    val maxDepth = args(5).toInt
     val maxBins = 100
 //    val seed = 1234
 
