@@ -72,10 +72,10 @@ object RandomForestImpl {
 
     val conf = new SparkConf().setAppName("RandomForestRegressionExample")
     //conf.setMaster("yarn")
-//    if (conf.get("master", "") == "") {
-//      log.info("Setting master internally")
-//      conf.setMaster("local[*]")
-//    }
+    if (conf.get("master", "") == "") {
+      log.info("Setting master internally")
+      conf.setMaster("local[*]")
+    }
 
     val sc = new SparkContext(conf)
 
@@ -149,6 +149,7 @@ object RandomForestImpl {
     }
     bm.append(Array(sc.master, "testing data", toMs(start, System.nanoTime()).toString()))
 //    labelsAndPredictions.take(5).foreach(x => println(x))
+    model.save(sc, args(6))
 
     start = System.nanoTime()
     val testMSE = labelsAndPredictions.map { case (v, p) => math.pow((v - p), 2) }.mean()
