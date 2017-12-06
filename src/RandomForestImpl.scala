@@ -72,10 +72,10 @@ object RandomForestImpl {
 
     val conf = new SparkConf().setAppName("RandomForestRegressionExample")
     //conf.setMaster("yarn")
-    if (conf.get("master", "") == "") {
-      log.info("Setting master internally")
-      conf.setMaster("local[*]")
-    }
+//    if (conf.get("master", "") == "") {
+//      log.info("Setting master internally")
+//      conf.setMaster("local[*]")
+//    }
 
     val sc = new SparkContext(conf)
 
