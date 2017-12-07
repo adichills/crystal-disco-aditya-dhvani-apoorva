@@ -1,5 +1,6 @@
 import java.io.{BufferedOutputStream, PrintWriter}
 
+import breeze.numerics.abs
 import org.apache.hadoop.fs.{FileSystem, Path}
 import org.apache.log4j.{Level, Logger}
 import org.apache.spark.mllib.evaluation.RegressionMetrics
@@ -149,6 +150,9 @@ object RandomForestImpl {
     }
     bm.append(Array(sc.master, "testing data", toMs(start, System.nanoTime()).toString()))
 //    labelsAndPredictions.take(5).foreach(x => println(x))
+    val getDiff = labelsAndPredictions.map(row => (row._1.toInt, row._2.toInt, abs(row._1.toInt - row._2.toInt)))
+    getDiff.saveAsTextFile(outputDir + "/predictedValues")
+
     model.save(sc, args(6))
 
     start = System.nanoTime()
