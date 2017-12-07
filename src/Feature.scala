@@ -1,7 +1,8 @@
-
+// Authors: Aditya, Apoorv, Dhvani
+// This program gets the 4 features that we use for our random forest model which are
+// artist hotness, song hotness, mean price and confidence
 
 import java.io.{BufferedWriter, File, FileWriter}
-import java.net.FileNameMap
 
 import org.apache.log4j.{Level, Logger}
 import org.apache.spark.SparkContext
@@ -13,9 +14,7 @@ import org.apache.spark.sql.{DataFrame, Row, SparkSession}
 import scala.util.control.Exception.allCatch
 
 object Feature {
-
-  def main(args:Array[String]): Unit ={
-
+  def main(args:Array[String]): Unit = {
     Logger.getLogger("org").setLevel(Level.OFF)
     Logger.getLogger("akka").setLevel(Level.OFF)
 
@@ -32,16 +31,14 @@ object Feature {
     createTopCommonGenereTable(spark,"/home/aditya/songs/all/artist_terms.csv")
     queries(spark)
     aggregation(spark)
-
-
-
   }
 
-  def aggregation(spark:SparkSession):Unit={
+  // get the mean of the 4 features
+  def aggregation(spark:SparkSession):Unit = {
     val df = spark.sql("select * from features")
     val avgArtistHotness = df.select(avg("artist_hotness")).rdd.map(row => row.toString()).take(1)(0)
-    val avgSongHotness = df.select(avg("song_hotness")).rdd.map(row=>row.toString()).take(1)(0)
-    val avgMeanPrice = df.select(avg("td_meanPrice")).rdd.map(row=>row.toString()).take(1)(0)
+    val avgSongHotness = df.select(avg("song_hotness")).rdd.map(row => row.toString()).take(1)(0)
+    val avgMeanPrice = df.select(avg("td_meanPrice")).rdd.map(row => row.toString()).take(1)(0)
     var sb:StringBuilder = new StringBuilder()
     sb.append("mean_artist_hotness")
     sb.append(",")
@@ -60,23 +57,21 @@ object Feature {
     sb.append("3")
     writeOutputToCsv(sb.toString(),"averages.csv")
 
-
     println(avgArtistHotness)
     println(avgSongHotness)
     println(avgMeanPrice)
   }
 
-  def writeOutputToCsv(result:String,fileName:String): Unit ={
-
+  def writeOutputToCsv(result:String,fileName:String): Unit = {
       val file = new File(fileName)
       val bw = new BufferedWriter(new FileWriter(file))
       bw.write(result)
       bw.close()
-
   }
 
-  def queries(spark:SparkSession): Unit ={
-
+  // get 8 features which are: td_confidence, artist_hotttnesss, song_hotttnesss, mean price, similar artist count,
+  // play count, genre, tempo
+  def queries(spark:SparkSession): Unit = {
     val q1_select_columns = "artist_id,artist_name,title,song_hotness,artist_hotness,tempo,play_count,song_id"
     val q1_condtion_columns = "song_id = play_song_id and track_id = play_track_id"
 
@@ -94,10 +89,12 @@ object Feature {
     val q2 = spark.sql("select " + q1_select_columns + q2_select_columns + "from intermediate_feature_1 left join similar_artists on intermediate_feature_1.artist_id = similar_artists.artistId2")
     q2.na.fill(0,Array("similar_artist_count")).createOrReplaceTempView("intermediate_feature_2")
 
-    val q4 = spark.sql("select " + q4_select_columns + "from intermediate_feature_2 ,artist_genre_common " + q4_condition_columns)
+    val q4 = spark.sql("select " + q4_select_columns + "from intermediate_feature_2 ,artist_genre_common " +
+      q4_condition_columns)
     q4.createOrReplaceTempView("intermediate_feature_3")
 
-    val q3 = spark.sql("select " + q3_select_columns + " from intermediate_feature_3 left join training_data on " + q3_condition_columns)
+    val q3 = spark.sql("select " + q3_select_columns + " from intermediate_feature_3 left join training_data on " +
+      q3_condition_columns)
     val features = q3.na.fill("0",Array("td_confidence","td_meanPrice"))
     features.createOrReplaceTempView("features")
     features.printSchema()
@@ -106,11 +103,10 @@ object Feature {
     val r = spark.sparkContext.textFile("features_scattered")
 
     r.map(row => row.replace("[","").replace("]","")).coalesce(1).saveAsTextFile("features")
-
-
   }
 
-  def createTopCommonGenereTable(spark:SparkSession,fileName:String):Unit={
+  // getting the top 1000 genres
+  def createTopCommonGenereTable(spark:SparkSession,fileName:String): Unit = {
     val artist_terms_df = getCSVIntoDF(spark,fileName,";")
     artist_terms_df.createOrReplaceTempView("artist_terms")
     val query = "select artist_terms.artist_term,artist_hotness from song_info,artist_terms where artist_terms.artist_id = song_info.artist_id"
@@ -123,35 +119,29 @@ object Feature {
 
     val top_1000_terms = spark.sql("select artist_term from top_1000_artist_terms").rdd.map(row=>row.toString().replace("[","").replace("]","")).take(1000).toSet
 
-
     val customSchema = StructType(
       Array(
         StructField("artistId3",StringType,true),
         StructField("top_1000_count",IntegerType,true))
     )
 
-    val artist_top_20_genereRDD = artist_terms_df.
+    val artist_top_1000_genereRDD = artist_terms_df.
       rdd
       .map(row=>row.toString().replace("[","").replace("]","").split(","))
       .map(row=>(row(0),row(1)))
       .groupByKey()
       .map({case (x,y) => Row(x,intersection_query(y.toSet,top_1000_terms))})
 
-
-    val df = spark.createDataFrame(artist_top_20_genereRDD,customSchema)
+    val df = spark.createDataFrame(artist_top_1000_genereRDD,customSchema)
     df.createOrReplaceTempView("artist_genre_common")
-
   }
-  def intersection_query(set:Set[String],top_1000_terms:Set[String]):Integer={
 
+  def intersection_query(set:Set[String],top_1000_terms:Set[String]):Integer = {
     set.intersect(top_1000_terms).size
   }
 
-
-
-  def createSimilarArtistTable(spark:SparkSession,fileName:String):DataFrame={
-
-
+  // get similar artists
+  def createSimilarArtistTable(spark:SparkSession,fileName:String):DataFrame = {
     val similar_artists1 = getCSVIntoDF(spark,fileName,";")
     similar_artists1.createOrReplaceTempView("similar_artists")
     val q = spark.sql("select artist_id  as artistId2 ,count(similar_artist) as similar_artist_count from similar_artists group by artist_id")
@@ -159,6 +149,7 @@ object Feature {
     q
   }
 
+  // get play count i.  e. data from Taste Profile
   def createPlayCountTable(spark:SparkSession,fileName:String): Unit ={
     val taste_profile_df = getCSVIntoDF(spark,fileName,",")
     taste_profile_df.printSchema()
@@ -168,11 +159,10 @@ object Feature {
   def createUniqueSongTitleCombinationFromTrainingData(spark:SparkSession, fileName:String): Unit ={
     val training_data = getCSVIntoRDD(spark.sparkContext,fileName,";")
 
-
-
-    val temp2 = training_data.filter(row=> row.length == 5 && isDoubleNumber(row(2)))
-    println(temp2.count)
-    val trainingDataRDD = temp2.map(row=> Row(cleanString(row(0)),cleanString(row(1)),row(2),row(3),translateConfidence(row(4))))
+    val filterTrainingData = training_data.filter(row=> row.length == 5 && isDoubleNumber(row(2)))
+    println(filterTrainingData.count)
+    val trainingDataRDD = filterTrainingData.map(row=> Row(cleanString(row(0)),cleanString(row(1)),row(2),row(3),
+      translateConfidence(row(4))))
 
     val customSchema = StructType(
       Array(
@@ -188,8 +178,7 @@ object Feature {
 
   }
 
-  def cleanString(s:String) :String ={
-
+  def cleanString(s:String) :String = {
     s.replaceAll("[^A-Za-z0-9]","").toLowerCase()
   }
 
@@ -200,10 +189,10 @@ object Feature {
       .option("mode", "DROPMALFORMED")
       .option("delimiter", delimiter)
       .load(fileName)
-
     df1
   }
 
+  // convert string confidence values to numeric values
   def translateConfidence(c:String):String={
     if(c.equals("terrible")){
       return "0"
@@ -235,8 +224,8 @@ object Feature {
       .filter(row => row != header)
       .map(row => row.split(sep))
   }
-  def createSongInfoTable(spark:SparkSession,fileName:String): Unit = {
 
+  def createSongInfoTable(spark:SparkSession,fileName:String): Unit = {
     val songInfoDF = getCSVIntoDF(spark,fileName,";")
     songInfoDF.createOrReplaceTempView("song_info")
     songInfoDF.printSchema()
@@ -256,16 +245,13 @@ object Feature {
         StructField("artist_id",StringType,true),
         StructField("song_id",StringType,true),
         StructField("track_id",StringType,true)
-
       ))
 
     val q2 = spark.createDataFrame(cleanedRDD,songInfoSchema)
     q2.createOrReplaceTempView("song_info")
     q2.printSchema()
-
-
-
   }
+
   def changeNaValueToZero(s:String):String={
     if(!isDoubleNumber(s)){
       return "0"
@@ -275,14 +261,13 @@ object Feature {
     }
   }
 
-  def cleanSongInfoRow(arr:Array[String]): Array[String] ={
+  def cleanSongInfoRow(arr:Array[String]): Array[String] = {
     Array(cleanString(arr(0))
       ,cleanString(arr(1))
       ,changeNaValueToZero(arr(2))
       ,changeNaValueToZero(arr(3))
       ,changeNaValueToZero(arr(4)),arr(5),arr(6),arr(7))
   }
-
 
   def isDoubleNumber(s: String): Boolean = (allCatch opt s.toDouble).isDefined
 

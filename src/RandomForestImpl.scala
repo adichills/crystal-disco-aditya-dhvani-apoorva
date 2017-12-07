@@ -1,3 +1,11 @@
+// Authors: Aditya, Apoorv, Dhvani
+// This is the program for training the random forest model. We load the training and testing data from two different
+// files. This is to avoid "producer effect" i.e. a song from an artist is not there in both data sets.
+// We also read a feature.txt file which has the number of columns (comma separated) to use as features from
+// all_features_train.csv/all_features_test.csv. We give confidence as categorical column and train the model.
+// We then calculate the errors and write it to a file. We run our model on training data as well, so as to check
+// whether we have overfitted the model or not. The less difference between RMSE of training and test data, the better.
+
 import java.io.{BufferedOutputStream, PrintWriter}
 
 import breeze.numerics.abs
@@ -16,112 +24,100 @@ object RandomForestImpl {
 
   private val log: Logger = Logger.getLogger(RandomForestImpl.getClass)
 
-  def getCSVLines(sc: SparkContext, fileName: String,sep:String): RDD[Array[String]] = {
+  // create RDD from a CSV file
+  def getCSVLines(sc: SparkContext, fileName: String, sep:String, headerPresent: Boolean): RDD[Array[String]] = {
     val fileRDD = sc.textFile(fileName)
-    val header = fileRDD.first()
-    fileRDD
-      .filter(row => row != header)
-      .map(row => row.split(sep))
+    if (headerPresent) {
+      val header = fileRDD.first()
+      fileRDD
+        .filter(row => row != header)
+        .map(row => row.split(sep))
+    } else {
+      fileRDD
+        .map(row => row.split(sep))
+    }
   }
 
+  // convert time to milliseconds
   def toMs(start: Long, end: Long): Long = {
     (end - start) / (1000L * 1000L)
   }
 
-  def write(it: Iterable[Iterable[String]], headerIt: Iterable[String], path: Path, sc: SparkContext): Unit = {
+  // write to file
+  def write(it: Iterable[Iterable[String]], headerIt: Iterable[String], path: Path, sc: SparkContext,
+    headerPresent: Boolean): Unit = {
     val fs = FileSystem.get(path.toUri, sc.hadoopConfiguration)
     val pw: PrintWriter = new PrintWriter(new BufferedOutputStream(fs.create(path)))
-    pw.println(headerIt.mkString(";"))
+    if (headerPresent) {
+      pw.println(headerIt.mkString(";"))
+    }
     it.foreach(x => pw.println(x.mkString(";")))
     pw.close
   }
 
-  def write(it: Iterable[Iterable[String]], path: Path, sc: SparkContext): Unit = {
-    val fs = FileSystem.get(path.toUri, sc.hadoopConfiguration)
-    val pw: PrintWriter = new PrintWriter(new BufferedOutputStream(fs.create(path)))
-    it.foreach(x => pw.println(x.mkString(";")))
-    pw.close
-  }
-
-  def getNumericalArray(strArr:Array[String],arrDouble:List[Double]): Array[Double] ={
-      var listD:ListBuffer[Double] = new ListBuffer[Double]
-      for(i<- 0 to strArr.length-1){
-        if(arrDouble.contains(i)){
-          listD.append(strArr(i).toDouble)
+  // initially we had 15 features. For analyzing, we were removing certain features. Thus reading from this file which
+  // has columns as numbers which represent which features to give to the model
+  def getColumnsToInclude(arrString:Array[String], arrDouble:List[Double]): Array[Double] ={
+      val columnList: ListBuffer[Double] = new ListBuffer[Double]
+      for (i <- 0 to arrString.length-1) {
+        if (arrDouble.contains(i)) {
+          columnList.append(arrString(i).toDouble)
         }
       }
-    listD.toArray
+    columnList.toArray
   }
 
   def main(args: Array[String]) {
-
     var startOverall = System.nanoTime()
     var start = -1L
-
-    val inputDir = args(0)
-    val outputDir = args(1)
-    val featureInputFile = args(2)
-    val testDataFile = args(3)
-
-    val bm = new ListBuffer[Array[String]]()
+    var trainingDataFile = args(0)
+    var testingDataFile = args(1)
+    var featureFile = args(2)
+    var outputDir = args(3)
+    var bm = new ListBuffer[Array[String]]()
     val bmHeader = Array("impl", "step", "timeInMs")
-
-    val writeMetrics = new ListBuffer[Array[String]]()
-
+    var writeMetrics = new ListBuffer[Array[String]]()
     Logger.getLogger("org").setLevel(Level.OFF)
     Logger.getLogger("akka").setLevel(Level.OFF)
 
-    val conf = new SparkConf().setAppName("RandomForestRegressionExample")
-    //conf.setMaster("yarn")
-//    if (conf.get("master", "") == "") {
-//      log.info("Setting master internally")
-//      conf.setMaster("local[*]")
-//    }
-
+    val conf = new SparkConf().setAppName("RandomForestRegression")
+    if (conf.get("master", "") == "") {
+      log.info("Setting master internally")
+      conf.setMaster("local[*]")
+    }
     val sc = new SparkContext(conf)
 
-    val featureInputString = getCSVLines(sc,featureInputFile,",")
-    var featuresWanted = featureInputString.map(row => {row.map(x=>x.toDouble)}).take(1)(0).toList
-
+    val featureInputString = getCSVLines(sc,featureFile,",", false)
+    var featuresWanted = featureInputString.map(row => {row.map(x => x.toDouble)}).take(1)(0).toList
     var featureSet = featuresWanted.toSet
 
-
     start = System.nanoTime()
-    val data = getCSVLines(sc, inputDir, ",")
-//    data.take(5).foreach(x => println(x))
-
-    val dataPoints = data.map(row =>
+    // get training data
+    val trainingData = getCSVLines(sc, trainingDataFile, ",", true)
+    val trainingDataPoints = trainingData.map(row =>
       new LabeledPoint(
         row(16).toDouble,
-        Vectors.dense(getNumericalArray(row,featuresWanted))
+        Vectors.dense(getColumnsToInclude(row,featuresWanted))
       )
     )
 
-    val testData = getCSVLines(sc, testDataFile, ",")
-    val testingData = testData.map(row =>
+    // get testing data
+    val testingData = getCSVLines(sc, testingDataFile, ",", true)
+    val testingDataPoints = testingData.map(row =>
       new LabeledPoint(
         row(16).toDouble,
-        Vectors.dense(getNumericalArray(row,featuresWanted))
+        Vectors.dense(getColumnsToInclude(row,featuresWanted))
       )
     )
-
 
     bm.append(Array(sc.master, "read data", toMs(start, System.nanoTime()).toString()))
 
-//    dataPoints.take(5).foreach(x => println(x))
-//    testingData.take(5).foreach(x => println(x))
-
-//    start = System.nanoTime()
-     //Split the data into training and test sets (30% held out for testing)
-//    val splits = dataPoints.randomSplit(Array(0.7, 0.3))
-//    val (trainingData, testData) = (splits(0), splits(1))
-//    bm.append(Array(sc.master, "split data", toMs(start, System.nanoTime()).toString()))
-
     start = System.nanoTime()
-    // Train a RandomForest model.
-    // Empty categoricalFeaturesInfo indicates all features are continuous.
-    //val numClasses = 2
-
+    // Empty categoricalFeaturesInfo indicates all features are continuous. If we have a 0 in the feature.txt file means
+    // we are considering confidence as one of our features to the model and thus take confidence as a categorical
+    // feature. Confidence has values ranging from 0 to 5. Thus using it as a categorical feature. The random
+    // forest model internally maps it six different columns with 0 in all columns except for which the value
+    // was specified
     var categoricalFeaturesInfo = Map[Int, Int]()
     if (featureSet.contains(0.0)) {
       categoricalFeaturesInfo = Map[Int, Int](
@@ -129,110 +125,65 @@ object RandomForestImpl {
       )
     }
 
-//    println(categoricalFeaturesInfo)
-
-    val numTrees = args(4).toInt // Use more in practice.
-    val featureSubsetStrategy = "auto" // Let the algorithm choose.
+    val numTrees = args(4).toInt
+    val featureSubsetStrategy = "auto" // Let the algorithm choose
     val impurity = "variance"
     val maxDepth = args(5).toInt
     val maxBins = 100
-//    val seed = 1234
 
-    val model = RandomForest.trainRegressor(dataPoints, categoricalFeaturesInfo,
+    // Train a RandomForest model
+    val model = RandomForest.trainRegressor(trainingDataPoints, categoricalFeaturesInfo,
       numTrees, featureSubsetStrategy, impurity, maxDepth, maxBins)
     bm.append(Array(sc.master, "training data", toMs(start, System.nanoTime()).toString()))
 
-    start = System.nanoTime()
-    // Evaluate model on test instances and compute test error
-    val labelsAndPredictions = testingData.map { point =>
-      val prediction = model.predict(point.features)
-      (point.label, prediction)
-    }
-    bm.append(Array(sc.master, "testing data", toMs(start, System.nanoTime()).toString()))
-//    labelsAndPredictions.take(5).foreach(x => println(x))
-    val getDiff = labelsAndPredictions.map(row => (row._1.toInt, row._2.toInt, abs(row._1.toInt - row._2.toInt)))
-    getDiff.saveAsTextFile(outputDir + "/predictedValues")
-
     model.save(sc, args(6))
 
-    start = System.nanoTime()
-    val testMSE = labelsAndPredictions.map { case (v, p) => math.pow((v - p), 2) }.mean()
-    println("Test Mean Squared Error = " + testMSE)
-    writeMetrics.append(Array("Test Mean Squared Error", testMSE.toString()))
-//    println("Learned regression forest model:\n" + model.toDebugString)
+    for (i <- 0 to 1) {
+      var name = ""
+      if (i == 0) {
+        name = "testing data"
+      } else {
+        name = "training data"
+      }
+      start = System.nanoTime()
+      // Evaluate model on test instances and compute test error
+      val labelsAndPredictions = testingDataPoints.map { point =>
+        val prediction = model.predict(point.features)
+        (point.label, prediction)
+      }
+      bm.append(Array(sc.master, name, toMs(start, System.nanoTime()).toString()))
 
-    val predictionAndLabels = labelsAndPredictions.map{case (s, c) => (c, s)}
+      val getDiff = labelsAndPredictions.map(row => (row._1.toInt, row._2.toInt, abs(row._1.toInt - row._2.toInt)))
+      getDiff.saveAsTextFile(outputDir + "//" + name + "/actualPredictedValues")
 
-    // Instantiate metrics object
-    val metrics = new RegressionMetrics(predictionAndLabels)
+      start = System.nanoTime()
+      val testMSE = labelsAndPredictions.map { case (v, p) => math.pow((v - p), 2) }.mean()
+      println("Evaluation metrics for " + name)
+      println("Test Mean Squared Error = " + testMSE)
+      writeMetrics.append(Array("Test Mean Squared Error " + name, testMSE.toString()))
 
-    // Squared error
-    println(s"MSE = ${metrics.meanSquaredError}")
-    writeMetrics.append(Array("MSE", metrics.meanSquaredError.toString()))
-    println(s"RMSE = ${metrics.rootMeanSquaredError}")
-    writeMetrics.append(Array("RMSE", metrics.rootMeanSquaredError.toString()))
-
-    // R-squared
-    println(s"R-squared = ${metrics.r2}")
-    writeMetrics.append(Array("R-squared", metrics.r2.toString()))
-
-    // Mean absolute error
-    println(s"MAE = ${metrics.meanAbsoluteError}")
-    writeMetrics.append(Array("MAE", metrics.meanAbsoluteError.toString()))
-
-    // Explained variance
-    println(s"Explained variance = ${metrics.explainedVariance}")
-    writeMetrics.append(Array("Explained variance", metrics.explainedVariance.toString()))
-    bm.append(Array(sc.master, "getting evaluation metrics", toMs(start, System.nanoTime()).toString()))
-
-
-    ///////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-    start = System.nanoTime()
-    // Evaluate model on the training data itself to check if its underfitting or overfitting
-    val labelsAndPredictionsTrainData = dataPoints.map { point =>
-      val prediction = model.predict(point.features)
-      (point.label, prediction)
+      val predictionAndLabels = labelsAndPredictions.map { case (s, c) => (c, s) }
+      // Instantiate metrics object
+      val metrics = new RegressionMetrics(predictionAndLabels)
+      // Squared error
+      println(s"MSE = ${metrics.meanSquaredError}")
+      writeMetrics.append(Array("MSE " + name, metrics.meanSquaredError.toString()))
+      println(s"RMSE = ${metrics.rootMeanSquaredError}")
+      writeMetrics.append(Array("RMSE " + name, metrics.rootMeanSquaredError.toString()))
+      // R-squared
+      println(s"R-squared = ${metrics.r2}")
+      writeMetrics.append(Array("R-squared " + name, metrics.r2.toString()))
+      // Mean absolute error
+      println(s"MAE = ${metrics.meanAbsoluteError}")
+      writeMetrics.append(Array("MAE " + name, metrics.meanAbsoluteError.toString()))
+      // Explained variance
+      println(s"Explained variance = ${metrics.explainedVariance}")
+      writeMetrics.append(Array("Explained variance " + name, metrics.explainedVariance.toString()))
+      bm.append(Array(sc.master, "getting evaluation metrics " + name, toMs(start, System.nanoTime()).toString()))
     }
-    bm.append(Array(sc.master, "running model on training data", toMs(start, System.nanoTime()).toString()))
-    //    labelsAndPredictions.take(5).foreach(x => println(x))
 
-    start = System.nanoTime()
-    val testMSETD = labelsAndPredictions.map { case (v, p) => math.pow((v - p), 2) }.mean()
-    println("Test Mean Squared Error Training Data = " + testMSETD)
-    writeMetrics.append(Array("Test Mean Squared Error Training Data", testMSETD.toString()))
-    //    println("Learned regression forest model:\n" + model.toDebugString)
-
-    val predictionAndLabelsTrainData = labelsAndPredictionsTrainData.map{case (s, c) => (c, s)}
-
-    // Instantiate metrics object
-    val metricsTD = new RegressionMetrics(predictionAndLabelsTrainData)
-
-    // Squared error
-    println(s"MSE = ${metricsTD.meanSquaredError}")
-    writeMetrics.append(Array("MSE Training Data", metricsTD.meanSquaredError.toString()))
-    println(s"RMSE Training Data = ${metricsTD.rootMeanSquaredError}")
-    writeMetrics.append(Array("RMSE Training Data", metricsTD.rootMeanSquaredError.toString()))
-
-    // R-squared
-    println(s"R-squared Training Data = ${metricsTD.r2}")
-    writeMetrics.append(Array("R-squared Training Data", metricsTD.r2.toString()))
-
-    // Mean absolute error
-    println(s"MAE Training Data = ${metricsTD.meanAbsoluteError}")
-    writeMetrics.append(Array("MAE Training Data", metricsTD.meanAbsoluteError.toString()))
-
-    // Explained variance
-    println(s"Explained variance Training Data = ${metricsTD.explainedVariance}")
-    writeMetrics.append(Array("Explained variance Training Data", metricsTD.explainedVariance.toString()))
-    bm.append(Array(sc.master, "getting evaluation metrics for training data", toMs(start, System.nanoTime()).toString()))
-
-
-    start = System.nanoTime()
     bm.append(Array(sc.master, "total time", toMs(startOverall, System.nanoTime()).toString()))
-
-    write(bm.map(_.toList), bmHeader.toList, new Path(outputDir, "bm.csv"), sc)
-    write(writeMetrics.map(_.toList), new Path(outputDir, "metrics.csv"), sc)
-
+    write(bm.map(_.toList), bmHeader.toList, new Path(outputDir, "bm.csv"), sc, true)
+    write(writeMetrics.map(_.toList), None, new Path(outputDir, "metrics.csv"), sc, false)
   }
 }
