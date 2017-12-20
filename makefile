@@ -6,10 +6,10 @@ SIMILAR_ARTISTS = /home/aditya/songs/all/similar_artists.csv
 OUTPUT_DIR_WITH_CACHE = output2
 OUTPUT_DIR_WITHOUT_CACHE = output1
 ITERATIONS = 10
-all: build run
+all: build
 
 build:
-	scalac -cp $(CLASSPATH) scala/RandomForestImpl.scala -d RandomForestImpl.jar
+	scalac -cp $(CLASSPATH) src/RandomForestImpl.scala -d RandomForestImpl.jar
 
 run:
 	$(SPARK_HOME)/bin/spark-submit --class RandomForestImpl \
